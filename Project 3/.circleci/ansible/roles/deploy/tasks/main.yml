@@ -1,0 +1,24 @@
+---
+- name: attempt to copy files, rollback if not
+  block:
+    - name: Copy and unarchive file
+      ansible.builtin.unarchive:
+        src: "/root/project/backend/dist.tar.gz"
+        dest: "/home/ubuntu/"
+    - name: Move files
+      shell: mv /home/ubuntu/dist/* /home/ubuntu/
+    - name: Remove dist folder
+      file:
+        path: /home/ubuntu/dist
+        state: absent
+    - name: start pm2
+      shell: pm2 start /home/ubuntu/main.js
+  rescue:
+    - name: stop pm2
+      shell: pm2 stop main
+    - name: Rollback by removing all files
+      shell: rm -rf /home/ubuntu/*
+    - name: start pm2
+      shell: pm2 stop /home/ubuntu/main.js
+    - name: Force a failure to stop build
+      ansible.builtin.command: /bin/false
