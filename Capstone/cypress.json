@@ -1,0 +1,7 @@
+{
+	"baseUrl": "http://localhost:3000",
+	"integrationFolder": "tests/e2e",
+	"testFiles": "**.spec.js",
+	"screenshotsFolder": "tests/e2e/snapshots/actual",
+	"trashAssetsBeforeRuns": true
+}

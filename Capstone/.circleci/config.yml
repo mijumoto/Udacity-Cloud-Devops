@@ -1,0 +1,105 @@
+version: 2.1
+orbs:
+  snyk: snyk/snyk@0.0.13
+jobs:
+  build-app:
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - app-dependencies-{{ checksum "package-lock.json" }}
+            - app-dependencies-
+      - run:
+          name: install dependencies
+          command: |
+            npm install --no-audit
+            npm build
+      - save_cache:
+          paths:
+            - ./node_modules
+            - ./.next
+          key: app-dependencies-{{ checksum "package-lock.json" }}
+  audit:
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - app-dependencies-{{ checksum "package-lock.json" }}
+            - app-dependencies-
+      - run:
+          name: npm audit
+          command: |
+            npm audit
+  lint:
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - app-dependencies-{{ checksum "package-lock.json" }}
+            - app-dependencies-
+      - run:
+          name: run lint
+          command: |
+            npm run lint
+
+  unit:
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - app-dependencies-{{ checksum "package-lock.json" }}
+            - app-dependencies-
+      - run:
+          name: npm audit
+          command: |
+            npm run unit
+  build-image:
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 19.03.13
+          docker_layer_caching: true
+      - run:
+          command: |
+            echo 'export PATH=~$PATH:~/.local/bin' >> $BASH_ENV
+            docker build -t 0.1.$CIRCLE_BUILD_NUM .
+            docker save --output image.tar 0.1.$CIRCLE_BUILD_NUM
+      - snyk/scan:
+          fail-on-issues: true
+          monitor-on-build: true
+          docker-image-name: 0.1.$CIRCLE_BUILD_NUM
+          target-file: "Dockerfile"
+          project: ${CIRCLE_PROJECT_REPONAME}/${CIRCLE_BRANCH}-app
+          token-variable: SNYK_TOKEN
+          additional-arguments: --exclude-base-image-vulns
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ./image.tar
+workflows:
+  build:
+    jobs:
+#      - build-app
+#      - audit:
+#          requires: [build-app]
+#      - lint:
+#          requires: [build-app]
+#      - unit:
+#          requires: [build-app]
+#      - build-image:
+#          requires: [audit, lint, unit]
+      - build-image
+
+
+#            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+#            docker push $DOCKER_REPO:$TAG
