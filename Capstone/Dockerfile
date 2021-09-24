@@ -1,6 +1,6 @@
 FROM node:12.21-buster-slim
 
-ENV PORT 3000
+ENV PORT 80
 
 # Create app directory
 RUN mkdir -p /usr/src/app
@@ -17,7 +17,7 @@ COPY . /usr/src/app
 RUN npm run build
 
 # Exposing port
-EXPOSE 3000
+EXPOSE 80
 
 # Running the app
 CMD [ "npm", "run", "start" ]

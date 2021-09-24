@@ -1,0 +1,3 @@
+Encontrar una imagen que tenga kubectl instalado, luego instalar aws-cli y eksctl
+Crear el cluster
+Hacer deploy al cluster

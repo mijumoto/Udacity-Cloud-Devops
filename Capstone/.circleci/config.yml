@@ -1,6 +1,17 @@
 version: 2.1
 orbs:
-  snyk: snyk/snyk@0.0.13
+  snyk: snyk/snyk@1.1.1
+
+commands:
+  rollback_pods:
+    description: Destroy Clusters and network.       
+    steps:
+      - run:
+          name: Destroy environments
+          command: |
+            kubectl rollout undo webserver
+          when: on_fail
+
 jobs:
   build-app:
     docker:
@@ -31,7 +42,7 @@ jobs:
             - app-dependencies-{{ checksum "package-lock.json" }}
             - app-dependencies-
       - run:
-          name: npm audit
+          name: Audit NPM modules
           command: |
             npm audit
   lint:
@@ -44,7 +55,7 @@ jobs:
             - app-dependencies-{{ checksum "package-lock.json" }}
             - app-dependencies-
       - run:
-          name: run lint
+          name: Run lint
           command: |
             npm run lint
 
@@ -58,7 +69,7 @@ jobs:
             - app-dependencies-{{ checksum "package-lock.json" }}
             - app-dependencies-
       - run:
-          name: npm audit
+          name: Run unit tests
           command: |
             npm run unit
   build-image:
@@ -67,39 +78,161 @@ jobs:
     steps:
       - checkout
       - setup_remote_docker:
-          version: 19.03.13
+          version: 20.10.7
           docker_layer_caching: true
+      - restore_cache:
+          keys:
+            - v1-{{ .Branch }}
+          paths:
+            - ./caches/app.tar
       - run:
+          name: Install Aws-cli
+          command: |
+            sudo apt-get update
+            sudo apt-get upgrade
+            sudo apt-get install python python-pip
+            sudo pip install awscli
+            aws --version
+      - run:
+          name: Load Docker image layer cache
+          command: |
+            set +o pipefail
+            docker load -i ./caches/app.tar | true
+      - run:
+          name: Build application Docker image
           command: |
             echo 'export PATH=~$PATH:~/.local/bin' >> $BASH_ENV
-            docker build -t 0.1.$CIRCLE_BUILD_NUM .
-            docker save --output image.tar 0.1.$CIRCLE_BUILD_NUM
+            docker build --cache-from=app -t app .
+      - run:
+          name: Save Docker image layer cache
+          command: |
+            mkdir -p ./caches
+            docker save -o ./caches/app.tar app
+      - save_cache:
+          key: v1-{{ .Branch }}-{{ epoch }}
+          paths:
+            - ./caches/app.tar
       - snyk/scan:
           fail-on-issues: true
           monitor-on-build: true
-          docker-image-name: 0.1.$CIRCLE_BUILD_NUM
+          docker-image-name: $APP_NAME
           target-file: "Dockerfile"
           project: ${CIRCLE_PROJECT_REPONAME}/${CIRCLE_BRANCH}-app
           token-variable: SNYK_TOKEN
           additional-arguments: --exclude-base-image-vulns
+      - run:
+          name: Push image to repo
+          command: |
+            aws get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ECR}
+            docker tag $APP_NAME "${ECR_REPO}:0.1.$CIRCLE_BUILD_NUM"
+            docker push "${ECR_REPO}:0.1.$CIRCLE_BUILD_NUM"
       - persist_to_workspace:
           root: .
           paths:
-            - ./image.tar
+            - ./caches/app.tar
+
+  create-and-deploy-cluster:
+    docker:
+      - image: alpine:3.13.6
+    steps:
+      - checkout
+      - run:
+          name: Install curl
+          command: |
+            apk add curl
+      - run:
+          name: Install aws-cli
+          command: |
+            apk add aws-cli
+      - run:
+          name: Install kubectl
+          command: |
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+      - run:
+          name: Install eksctl
+          command: |
+            curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+            mv /tmp/eksctl /usr/local/bin
+      - run:
+          name: Create EKS cluster
+          command: |
+            if ! eksctl get cluster --name=$APP_NAME --region=$AWS_REGION; then
+              eksctl create cluster --version 1.21 --name=$APP_NAME --tags environment=production --region $AWS_REGION --zones us-east-1a,us-east-1b,us-east-1c --nodegroup-name $APP_NAME --node-type t2.micro --nodes 3 --enable-ssm
+            else
+              aws eks --region $AWS_REGION update-kubeconfig --name $APP_NAME
+            fi
+          no_output_timeout: 30m
+      - run:
+          name: Deploy to Cluster
+          command: |
+            export TOKEN=`aws ecr --region=$AWS_REGION get-authorization-token --output text \
+            --query authorizationData[].authorizationToken | base64 -d | cut -d: -f2`
+            kubectl delete secret --ignore-not-found regcred
+            kubectl create secret docker-registry regcred \
+            --docker-server=${ECR} \
+            --docker-username=AWS \
+            --docker-password="${TOKEN}"
+            kubectl apply -f .circleci/kubernetes/deployment.yml
+            kubectl apply -f .circleci/kubernetes/loadbalancer.yml
+            kubectl rollout restart deployment webserver
+            echo "Listing deployments"
+            kubectl get deployments -o wide
+            echo
+            echo "Listing services"
+            kubectl get services -o wide
+            echo
+            echo "Listing pods"
+            kubectl get pods -o wide
+            export loadbalancer=$(kubectl -n default get svc loadbalancer -o jsonpath='{.status.loadBalancer.ingress[*].hostname}')
+            echo ${loadbalancer}
+            curl -H "Content-Type: text/plain" \
+            -H "token: k8s_udacity_deploy_${CIRCLE_WORKFLOW_ID}" \
+            --request PUT \
+            --data ${loadbalancer} https://api.memstash.io/values/uda-fetchurlk8s
+          no_output_timeout: 30m
+      - rollback_pods
+
+  e2e:
+    docker:
+      - image: 'cypress/base:10'
+        environment:
+          TERM: xterm
+    steps:
+      - checkout
+      - run:
+          name: Deploy to Cluster
+          command: |
+            export URL=$(curl -H "token: k8s_udacity_deploy_${CIRCLE_WORKFLOW_ID}" --request GET https://api.memstash.io/values/uda-fetchurlk8s)
+            echo ${URL}
+      - run: sed -i -e "s/localhost:3000/${URL}/g" cypress.json
+      - run: npm install
+      - run:
+          name: Running cypress tests
+          command: npm run e2e
+      - store_artifacts:
+          path: cypress/videos
+      - store_artifacts:
+          path: cypress/screenshots
+      - rollback_pods
+
 workflows:
   build:
     jobs:
-#      - build-app
-#      - audit:
-#          requires: [build-app]
-#      - lint:
-#          requires: [build-app]
-#      - unit:
-#          requires: [build-app]
-#      - build-image:
-#          requires: [audit, lint, unit]
-      - build-image
-
-
-#            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-#            docker push $DOCKER_REPO:$TAG
+      - build-app
+      - audit:
+          requires: [build-app]
+      - lint:
+          requires: [build-app]
+      - unit:
+          requires: [build-app]
+      - build-image:
+          requires: [audit, lint, unit]
+          context:
+            - AWS
+      - create-and-deploy-cluster:
+          requires: [build-image]
+          context:
+            - AWS
+      - e2e:
+          requires: [create-and-deploy-cluster]
