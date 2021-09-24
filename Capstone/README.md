@@ -99,7 +99,7 @@ spec:
     spec:
       containers:
       - name: webserver
-        image: 321723638230.dkr.ecr.us-east-1.amazonaws.com/udacitycapstone:latest
+        image: AWSACCOUNTID.dkr.ecr.us-east-1.amazonaws.com/udacitycapstone:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 80

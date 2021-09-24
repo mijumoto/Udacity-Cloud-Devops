@@ -69,7 +69,7 @@ Resources:
           systemctl start apache2.service
           cd /var/www/html
           sudo rm index.html
-          aws s3 cp s3://udagram-321723638230/udagram.zip .
+          aws s3 cp s3://udagram-AWSACCOUNTID/udagram.zip .
           unzip -o udagram.zip
           rm udagram.zip
           sudo chmod 755 -R index_files

@@ -12,7 +12,7 @@ EBS: 10gb
 
 ## Security Groups and Roles
 
-1. Since you will be downloading the application archive from an S3 Bucket, you'll need to create an IAM Role that allows your instances to use the S3 Service. —> Role: udagram, s3: https://s3.console.aws.amazon.com/s3/buckets/udagram-321723638230?region=us-east-1&tab=objects 
+1. Since you will be downloading the application archive from an S3 Bucket, you'll need to create an IAM Role that allows your instances to use the S3 Service. —> Role: udagram, s3: https://s3.console.aws.amazon.com/s3/buckets/udagram-AWSACCOUNTID?region=us-east-1&tab=objects 
 2. Udagram communicates on the default HTTP Port: 80, so your servers will need this inbound port open since you will use it with the Load Balancer and the Load Balancer Health Check. As for outbound, the servers will need unrestricted internet access to be able to download and update their software.
 3. The load balancer should allow all public traffic (0.0.0.0/0) on port 80 inbound, which is the default HTTP port. Outbound, it will only be using port 80 to reach the internal servers.
 4. The application needs to be deployed into private subnets with a Load Balancer located in a public subnet.
